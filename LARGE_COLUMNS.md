@@ -110,7 +110,7 @@ flush.size=20
 The JDBC Connection to use when querying the large Columns from the upstream DB.
 This should probably use the same values as the upstream CDC Connector generating the Kafka Records.
 This configuration property is identical to the one in the JDBC Kafka Connector:
-* https://docs.confluent.io/kafka-connectors/jdbc/current/source-connector/source_config_options.html#jdbc-source-connector-configuration-properties
+* https://docs.confluent.io/kafka-connectors/jdbc/current/source-connector/source_config_options.html#database
 ```
 connection.url=jdbc:db2://my.db2.host:50000/my_db
 ```
@@ -120,7 +120,7 @@ connection.url=jdbc:db2://my.db2.host:50000/my_db
 The JDBC Username to use when querying the large Columns from the upstream DB.
 This should probably use the same values as the upstream CDC Connector generating the Kafka Records.
 This configuration property is identical to the one in the JDBC Kafka Connector:
-* https://docs.confluent.io/kafka-connectors/jdbc/current/source-connector/source_config_options.html#jdbc-source-connector-configuration-properties
+* https://docs.confluent.io/kafka-connectors/jdbc/current/source-connector/source_config_options.html#database
 ```
 connection.user=my_user
 ```
@@ -130,14 +130,16 @@ connection.user=my_user
 The JDBC Password to use when querying the large Columns from the upstream DB.
 This should probably use the same values as the upstream CDC Connector generating the Kafka Records.
 This configuration property is identical to the one in the JDBC Kafka Connector:
-* https://docs.confluent.io/kafka-connectors/jdbc/current/source-connector/source_config_options.html#jdbc-source-connector-configuration-properties
+* https://docs.confluent.io/kafka-connectors/jdbc/current/source-connector/source_config_options.html#database
 ```
 connection.password=my_pass
 ```
 
 ### hash.cache.enabled (new)
 
-If enabled, will cache ```hash.cache.size``` hashes, based on LRU, to prevent writing the same large-column values over and over.
+If enabled, will cache ```hash.cache.size``` hashes, based on LRU, to prevent repeatedly writing the same large-column values.
+This is purely an optimization, used to prevent excess writes to HDFS.
+Thus enabling or disabling it should have no impact on the stability/correctness of the Connector.
 
 Default: __true__
 ```
@@ -184,3 +186,87 @@ column.include.list=SCHEMA1.TABLE1.COLUMN4,SCHEMA1.TABLE1.COLUMN5,SCHEMA1.TABLE2
     * This functionality can be disabled entirely, in the configuration, if desired.
 * The list of Tables, and Columns for each Table, must be explicitly defined in the configuration.
     * Any messages not explicitly matched will be ignored by this Connector.
+
+## ISSUES:
+
+### Case-sensitive HDFS Username
+
+When connecting to HDFS2, Usernames are case-sensitive.
+So if the expected Username is 'myusername' and you pass in 'MyUserName', it will not work.
+
+Solution: _Make sure the HDFS Username has the correct case_
+```
+unable to return groups for user MyUserName (org.apache.hadoop.security.ShellBasedUnixGroupsMapping:210)
+PartialGroupNameException The user name 'MyUserName' is not found. id: ‘MyUserName’: no such user
+id: ‘MyUserName’: no such user
+
+    at org.apache.hadoop.security.ShellBasedUnixGroupsMapping.resolvePartialGroupNames(ShellBasedUnixGroupsMapping.java:294)
+    at org.apache.hadoop.security.ShellBasedUnixGroupsMapping.getUnixGroups(ShellBasedUnixGroupsMapping.java:207)
+    at org.apache.hadoop.security.ShellBasedUnixGroupsMapping.getGroups(ShellBasedUnixGroupsMapping.java:97)
+    at org.apache.hadoop.security.JniBasedUnixGroupsMappingWithFallback.getGroups(JniBasedUnixGroupsMappingWithFallback.java:51)
+    at org.apache.hadoop.security.Groups$GroupCacheLoader.fetchGroupList(Groups.java:387)
+    at org.apache.hadoop.security.Groups$GroupCacheLoader.load(Groups.java:321)
+    at org.apache.hadoop.security.Groups$GroupCacheLoader.load(Groups.java:270)
+    at com.google.common.cache.LocalCache$LoadingValueReference.loadFuture(LocalCache.java:3529)
+    at com.google.common.cache.LocalCache$Segment.loadSync(LocalCache.java:2278)
+    at com.google.common.cache.LocalCache$Segment.lockedGetOrLoad(LocalCache.java:2155)
+    at com.google.common.cache.LocalCache$Segment.get(LocalCache.java:2045)
+    at com.google.common.cache.LocalCache.get(LocalCache.java:3962)
+    at com.google.common.cache.LocalCache.getOrLoad(LocalCache.java:3985)
+    at com.google.common.cache.LocalCache$LocalLoadingCache.get(LocalCache.java:4946)
+    at org.apache.hadoop.security.Groups.getGroups(Groups.java:228)
+    at org.apache.hadoop.security.UserGroupInformation.getGroups(UserGroupInformation.java:1796)
+    at org.apache.hadoop.security.UserGroupInformation.getGroupNames(UserGroupInformation.java:1784)
+    at org.apache.hadoop.hive.metastore.HiveMetaStoreClient.open(HiveMetaStoreClient.java:496)
+    at org.apache.hadoop.hive.metastore.HiveMetaStoreClient.<init>(HiveMetaStoreClient.java:245)
+    at org.apache.hive.hcatalog.common.HiveClientCache$CacheableHiveMetaStoreClient.<init>(HiveClientCache.java:409)
+    at java.base/jdk.internal.reflect.NativeConstructorAccessorImpl.newInstance0(Native Method)
+    at java.base/jdk.internal.reflect.NativeConstructorAccessorImpl.newInstance(NativeConstructorAccessorImpl.java:62)
+    at java.base/jdk.internal.reflect.DelegatingConstructorAccessorImpl.newInstance(DelegatingConstructorAccessorImpl.java:45)
+    at java.base/java.lang.reflect.Constructor.newInstance(Constructor.java:490)
+    at org.apache.hadoop.hive.metastore.MetaStoreUtils.newInstance(MetaStoreUtils.java:1740)
+    at org.apache.hadoop.hive.metastore.RetryingMetaStoreClient.<init>(RetryingMetaStoreClient.java:83)
+    at org.apache.hadoop.hive.metastore.RetryingMetaStoreClient.getProxy(RetryingMetaStoreClient.java:133)
+    at org.apache.hadoop.hive.metastore.RetryingMetaStoreClient.getProxy(RetryingMetaStoreClient.java:118)
+    at org.apache.hive.hcatalog.common.HiveClientCache$5.call(HiveClientCache.java:297)
+    at org.apache.hive.hcatalog.common.HiveClientCache$5.call(HiveClientCache.java:292)
+    at com.google.common.cache.LocalCache$LocalManualCache$1.load(LocalCache.java:4864)
+    at com.google.common.cache.LocalCache$LoadingValueReference.loadFuture(LocalCache.java:3529)
+    at com.google.common.cache.LocalCache$Segment.loadSync(LocalCache.java:2278)
+    at com.google.common.cache.LocalCache$Segment.lockedGetOrLoad(LocalCache.java:2155)
+    at com.google.common.cache.LocalCache$Segment.get(LocalCache.java:2045)
+    at com.google.common.cache.LocalCache.get(LocalCache.java:3962)
+    at com.google.common.cache.LocalCache$LocalManualCache.get(LocalCache.java:4859)
+    at org.apache.hive.hcatalog.common.HiveClientCache.getOrCreate(HiveClientCache.java:292)
+    at org.apache.hive.hcatalog.common.HiveClientCache.get(HiveClientCache.java:267)
+    at org.apache.hive.hcatalog.common.HCatUtil.getHiveMetastoreClient(HCatUtil.java:558)
+    at io.confluent.connect.storage.hive.HiveMetaStore.<init>(HiveMetaStore.java:78)
+    at io.confluent.connect.hdfs.hive.HiveMetaStore.<init>(HiveMetaStore.java:32)
+    at io.confluent.connect.hdfs.DataWriter.initializeHiveServices(DataWriter.java:306)
+    at io.confluent.connect.hdfs.DataWriter.<init>(DataWriter.java:233)
+    at io.confluent.connect.hdfs.DataWriter.<init>(DataWriter.java:99)
+    at io.confluent.connect.hdfs.HdfsSinkTask.start(HdfsSinkTask.java:91)
+    ...
+```
+
+### DB2 SQL Error: SQLCODE=-104, SQLSTATE=42601
+
+This has _not_ been fixed, nor is there a good workaround.
+
+Things to try:
+1. Upgrade the DB2 driver version; or possibly downgrade the driver, if the DB2 is an older version.
+2. Turn on debugging for the PreparedStatement called in:
+   * ```JdbcQueryUtil.executeSingletonQuery(JdbcQueryUtil.java:210)```
+3. Remove the JDBC Driver from the Connector build (mark it as 'provided' in the pom.xml), and externally install (via Ansible) a different JDBC driver into the Connector install directory.
+
+Stack Trace:
+```
+com.ibm.db2.jcc.am.SqlSyntaxErrorException: DB2 SQL Error: SQLCODE=-104, SQLSTATE=42601, SQLERRMC=;;WHERE MY_PRIMARY_KEY=?;END-OF-STATEMENT, DRIVER=4.31.10
+    ...
+    at com.zaxxer.hikari.pool.ProxyPreparedStatement.executeQuery(ProxyPreparedStatement.java:52)
+    at com.zaxxer.hikari.pool.HikariProxyPreparedStatement.executeQuery(HikariProxyPreparedStatement.java)
+    at io.confluent.connect.hdfs.jdbc.JdbcQueryUtil.executeSingletonQuery(JdbcQueryUtil.java:210)
+    at io.confluent.connect.hdfs.jdbc.JdbcRecordTransformer.transformRecord(JdbcRecordTransformer.java:179)
+    at io.confluent.connect.hdfs.jdbc.JdbcHdfsSinkTask.put(JdbcHdfsSinkTask.java:114)
+    ...
+```
