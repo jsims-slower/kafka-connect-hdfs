@@ -136,7 +136,7 @@ public class JdbcHdfsSinkTask extends HdfsSinkTask {
     // Trigger a sync() to HDFS, even if no records were written.
     // This updates all accounting and buffered/delayed writes, etc...
     super.put(Collections.emptyList());
-    log.debug("put({}): Processing {} records from Kafka", getClass().getSimpleName(), records.size());
+
     log.debug(
         "{}.put(): Finished processing {} records, {} written",
         getClass().getSimpleName(),

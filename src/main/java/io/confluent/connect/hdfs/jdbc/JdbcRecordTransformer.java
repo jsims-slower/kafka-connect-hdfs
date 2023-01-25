@@ -60,10 +60,8 @@ public class JdbcRecordTransformer {
   /**
    * NOTE: Not threadsafe, as several components update things like basic Collections
    */
-  public SinkRecord transformRecord(
-      SqlMetadataCache sqlMetadataCache,
-      SinkRecord oldRecord
-  ) throws SQLException {
+  public SinkRecord transformRecord(SqlMetadataCache sqlMetadataCache,
+                                    SinkRecord oldRecord) throws SQLException {
     JdbcTableInfo tableInfo = toTable(oldRecord.headers());
 
     // Get a list of Fields requested/configured to be in the new Schema.
@@ -87,18 +85,11 @@ public class JdbcRecordTransformer {
 
     Map<String, Field> oldFieldsMap = toFieldsMap(oldValueSchema);
 
-    Set<String> oldFieldNamesLower =
-        oldFieldsMap
-            .keySet()
-            .stream()
-            .map(String::toLowerCase)
-            .collect(Collectors.toSet());
-
     Set<String> columnNamesLowerToQuery =
-        includedFieldsLower
-            .stream()
-            .filter(((Predicate<String>) oldFieldNamesLower::contains).negate())
-            .collect(Collectors.toSet());
+        calculateColumnNamesLowerToQuery(
+            includedFieldsLower,
+            oldFieldsMap
+        );
 
     // No actual columns to Query? No need to write anything at all to HDFS
 
@@ -108,15 +99,6 @@ public class JdbcRecordTransformer {
 
     // Gather Column Metadata from the DB
 
-    Map<String, JdbcColumnInfo> allColumnsLowerMap =
-        sqlMetadataCache
-            .fetchAllColumns(tableInfo)
-            .stream()
-            .collect(Collectors.toMap(
-                column -> column.getName().toLowerCase(),
-                Function.identity()
-            ));
-
     List<JdbcColumnInfo> primaryKeyColumns =
         sqlMetadataCache.fetchPrimaryKeyColumns(tableInfo);
 
@@ -124,29 +106,10 @@ public class JdbcRecordTransformer {
       throw new DataException("Table has no Primary Key(s): " + tableInfo);
     }
 
-    Set<String> primaryKeyColumnNamesLower =
-        primaryKeyColumns
-            .stream()
-            .map(JdbcColumnInfo::getName)
-            .map(String::toLowerCase)
-            .collect(Collectors.toSet());
-
-    List<JdbcColumnInfo> columnsToQuery =
-        columnNamesLowerToQuery
-            .stream()
-            .filter(((Predicate<String>) primaryKeyColumnNamesLower::contains).negate())
-            .map(columnNameLower -> Optional
-                .ofNullable(allColumnsLowerMap.get(columnNameLower))
-                .orElseThrow(() -> new DataException(
-                    "Configured Column ["
-                    + columnNameLower
-                    + "] does not exist in Table ["
-                    + tableInfo
-                    + "]"
-                ))
-            )
-            .sorted(JdbcColumnInfo.byOrdinal)
-            .collect(Collectors.toList());
+    List<JdbcColumnInfo> columnsToQuery = calculateColumnsToQuery(sqlMetadataCache,
+                                                                  tableInfo,
+                                                                  columnNamesLowerToQuery,
+                                                                  primaryKeyColumns);
 
     // Create the mew Schema and new value Struct
 
@@ -169,7 +132,7 @@ public class JdbcRecordTransformer {
         .fields()
         .forEach(newField -> Optional
             .ofNullable(oldFieldsMap.get(newField.name()))
-            .flatMap(oldField -> Optional.ofNullable(oldValueStruct.get(oldField)))
+            .map(oldValueStruct::get)
             .ifPresent(oldValue -> newValueStruct.put(newField, oldValue))
         );
 
@@ -227,10 +190,8 @@ public class JdbcRecordTransformer {
         .fields()
         .stream()
         .collect(Collectors.toMap(
-            field -> Optional
-                .ofNullable(field.name())
-                .map(String::trim)
-                .filter(((Predicate<String>) String::isEmpty).negate())
+            field -> JdbcUtil
+                .trimToNone(field.name())
                 // NOTE: Should be impossible to reach here!
                 .orElseThrow(() -> new DataException(
                     "Field ["
@@ -281,5 +242,59 @@ public class JdbcRecordTransformer {
         ));
 
     return new JdbcTableInfo(schema, table);
+  }
+
+  private Set<String> calculateColumnNamesLowerToQuery(Set<String> includedFieldsLower,
+                                                       Map<String, Field> oldFieldsMap) {
+    Set<String> oldFieldNamesLower =
+        oldFieldsMap
+            .keySet()
+            .stream()
+            .map(String::toLowerCase)
+            .collect(Collectors.toSet());
+
+    return includedFieldsLower
+        .stream()
+        .filter(((Predicate<String>) oldFieldNamesLower::contains).negate())
+        .collect(Collectors.toSet());
+  }
+
+  private List<JdbcColumnInfo> calculateColumnsToQuery(
+      SqlMetadataCache sqlMetadataCache,
+      JdbcTableInfo tableInfo,
+      Set<String> columnNamesLowerToQuery,
+      List<JdbcColumnInfo> primaryKeyColumns
+  ) throws SQLException {
+    Set<String> primaryKeyColumnNamesLower =
+        primaryKeyColumns
+            .stream()
+            .map(JdbcColumnInfo::getName)
+            .map(String::toLowerCase)
+            .collect(Collectors.toSet());
+
+    Map<String, JdbcColumnInfo> allColumnsLowerMap =
+        sqlMetadataCache
+            .fetchAllColumns(tableInfo)
+            .stream()
+            .collect(Collectors.toMap(
+                column -> column.getName().toLowerCase(),
+                Function.identity()
+            ));
+
+    return columnNamesLowerToQuery
+        .stream()
+        .filter(((Predicate<String>) primaryKeyColumnNamesLower::contains).negate())
+        .map(columnNameLower -> Optional
+            .ofNullable(allColumnsLowerMap.get(columnNameLower))
+            .orElseThrow(() -> new DataException(
+                "Configured Column ["
+                + columnNameLower
+                + "] does not exist in Table ["
+                + tableInfo
+                + "]"
+            ))
+        )
+        .sorted(JdbcColumnInfo.byOrdinal)
+        .collect(Collectors.toList());
   }
 }
