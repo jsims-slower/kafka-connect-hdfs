@@ -27,11 +27,18 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 public class JdbcSchema {
-  public static Schema createSchema(Set<String> fieldsLower,
+  public static Schema createSchema(String schemaName,
                                     Schema oldSchema,
+                                    Set<String> fieldsLower,
                                     Collection<JdbcColumnInfo> primaryKeyColumns,
                                     Collection<JdbcColumnInfo> columnsToQuery) {
-    SchemaBuilder newSchemaBuilder = SchemaBuilder.struct();
+    SchemaBuilder newSchemaBuilder =
+        SchemaBuilder
+            .struct()
+            .name(schemaName)
+            .version(oldSchema.version());
+
+    // Add all PrimaryKey and Requested(Usually LOB) Columns to the new Schema, in Ordinal order
 
     Set<String> newColumnNames =
         Stream
@@ -53,10 +60,13 @@ public class JdbcSchema {
             .map(JdbcColumnInfo::getName)
             .collect(Collectors.toSet());
 
+    // Append configured/requested non-column fields to the Schema.
+    // NOTE: This functionality is not used very often.
+
     oldSchema
         .fields()
         .forEach(field -> {
-          String fieldName = field.name().trim();
+          String fieldName = field.name();
           if (!newColumnNames.contains(fieldName)
               && fieldsLower.contains(fieldName.toLowerCase())) {
             newSchemaBuilder.field(fieldName, field.schema());

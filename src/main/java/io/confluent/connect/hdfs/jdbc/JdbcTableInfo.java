@@ -59,8 +59,10 @@ public class JdbcTableInfo implements Comparable<JdbcTableInfo> {
     return table;
   }
 
+  /**
+   * @return FQN for calls to JDBC: [schema].[table]
+   */
   public String qualifiedName() {
-    // Same as toString, without being prefixed by the db
     return JdbcUtil.trimToNull(
         Stream
             .of(schema, table)

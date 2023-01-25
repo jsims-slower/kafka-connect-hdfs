@@ -31,14 +31,14 @@ import java.sql.SQLException;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Map;
-import java.util.Optional;
+import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 public class JdbcHdfsSinkTask extends HdfsSinkTask {
   private static final Logger log = LoggerFactory.getLogger(JdbcHdfsSinkTask.class);
 
+  private String schemaSuffix;
   private HashCache hashCache;
   private HikariConfig hikariConfig;
   private Map<JdbcTableInfo, Set<String>> includedFieldsLowerMap;
@@ -51,6 +51,8 @@ public class JdbcHdfsSinkTask extends HdfsSinkTask {
       log.info("Loading JDBC configs");
 
       JdbcHdfsSinkConnectorConfig connectorConfig = new JdbcHdfsSinkConnectorConfig(props);
+
+      schemaSuffix = connectorConfig.getSchemaSuffix();
 
       hikariConfig = new HikariConfig();
       hikariConfig.setJdbcUrl(connectorConfig.getConnectionUrl());
@@ -86,7 +88,12 @@ public class JdbcHdfsSinkTask extends HdfsSinkTask {
 
   @Override
   public void put(Collection<SinkRecord> records) {
-    log.debug("put(large-columns): Processing {} records from Kafka", records.size());
+    log.debug(
+        "{}.put(): Processing {} records from Kafka",
+        getClass().getSimpleName(),
+        records.size()
+    );
+
     // TODO: Keep track of schema changes
     // TODO: Verify db and schema match the connection string.
     // TODO: groupBy?
@@ -97,12 +104,21 @@ public class JdbcHdfsSinkTask extends HdfsSinkTask {
     SqlMetadataCache sqlMetadataCache = new SqlMetadataCache(dataSource);
 
     // Iterate over each record, and put() each individually
-    for (SinkRecord record : records) {
-      try {
-        Optional
-            .ofNullable(recordTransformer.transformRecord(sqlMetadataCache, record))
-            .map(Stream::of)
-            .orElseGet(Stream::empty)
+    long writtenRecordCount =
+        records
+            .stream()
+            .map(record -> {
+              try {
+                return recordTransformer.transformRecord(
+                    sqlMetadataCache,
+                    record
+                );
+              } catch (SQLException ex) {
+                log.error("Failed to transform Record: {}", ex.getMessage(), ex);
+                throw new DataException("Failed to transform Record: " + ex.getMessage(), ex);
+              }
+            })
+            .filter(Objects::nonNull)
             .peek(transformedRecord -> log.debug(
                 "Created new SinkRecord from old Sink Record: PK [{}] Columns [{}]",
                 transformedRecord.key(),
@@ -114,17 +130,19 @@ public class JdbcHdfsSinkTask extends HdfsSinkTask {
                     .collect(Collectors.joining(","))
             ))
             .map(Collections::singletonList)
-            .forEach(super::put);
-      } catch (SQLException ex) {
-        log.error("Failed to transform Record: {}", ex.getMessage(), ex);
-        throw new DataException("Failed to transform Record: " + ex.getMessage(), ex);
-      }
-    }
+            .peek(super::put)
+            .count();
 
     // Trigger a sync() to HDFS, even if no records were written.
-    // This updates all accounting and delayed writes, etc...
+    // This updates all accounting and buffered/delayed writes, etc...
     super.put(Collections.emptyList());
-    log.debug("put(-large-files): Finished");
+    log.debug("put({}): Processing {} records from Kafka", getClass().getSimpleName(), records.size());
+    log.debug(
+        "{}.put(): Finished processing {} records, {} written",
+        getClass().getSimpleName(),
+        records.size(),
+        writtenRecordCount
+    );
   }
 
   @Override
@@ -135,7 +153,8 @@ public class JdbcHdfsSinkTask extends HdfsSinkTask {
 
     recordTransformer = new JdbcRecordTransformer(dataSource,
                                                   includedFieldsLowerMap,
-                                                  hashCache);
+                                                  hashCache,
+                                                  schema -> schema.name() + schemaSuffix);
 
     log.info("Successfully opened JDBC DataSource: {}", dataSource.getJdbcUrl());
 

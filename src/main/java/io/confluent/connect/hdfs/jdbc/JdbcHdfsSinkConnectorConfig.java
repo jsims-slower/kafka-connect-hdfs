@@ -34,6 +34,7 @@ import java.util.stream.Collectors;
 public class JdbcHdfsSinkConnectorConfig extends HdfsSinkConnectorConfig {
   public static final String DATABASE_GROUP = "Database";
   public static final String HASH_CACHE_GROUP = "HashCache";
+  public static final String SCHEMA_GROUP = "Schema";
 
   public static final String CONNECTION_URL_CONFIG = "connection.url";
   public static final String CONNECTION_URL_DOC = "JDBC connection URL.";
@@ -48,7 +49,7 @@ public class JdbcHdfsSinkConnectorConfig extends HdfsSinkConnectorConfig {
   public static final String CONNECTION_PASSWORD_DISPLAY = "JDBC Password";
 
   public static final String COLUMN_INCLUDE_LIST_CONFIG = "column.include.list";
-  public static final String COLUMN_INCLUDE_FORMAT = "<schema>.<table>.<column>";
+  public static final String COLUMN_INCLUDE_FORMAT = "[schema].[table].[column]";
   public static final String COLUMN_INCLUDE_LIST_DOC =
       "List of fully-qualified columns to include. IE: " + COLUMN_INCLUDE_FORMAT;
   public static final String COLUMN_INCLUDE_LIST_DISPLAY = "Columns to include";
@@ -66,11 +67,28 @@ public class JdbcHdfsSinkConnectorConfig extends HdfsSinkConnectorConfig {
   public static final String HASH_CACHE_SIZE_DISPLAY = "Hash Cache size";
   public static final int HASH_CACHE_SIZE_DEFAULT = 10000;
 
+  public static final String SCHEMA_SUFFIX_CONFIG = "schema.suffix";
+  public static final String SCHEMA_SUFFIX_DOC = "The Suffix to add to the generated Schema name.";
+  public static final String SCHEMA_SUFFIX_DISPLAY = "Schema Suffix";
+
   public static ConfigDef newConfigDef() {
+    ConfigDef configDef = HdfsSinkConnectorConfig.newConfigDef();
+
     int orderInDatabaseGroup = 0;
     int orderInHashCacheGroup = 0;
-    return HdfsSinkConnectorConfig
-        .newConfigDef()
+
+    // Group "Schema" already exists, and we want to append onto it
+    int orderInSchemaGroup =
+        configDef
+            .configKeys()
+            .values()
+            .stream()
+            .filter(configKey -> SCHEMA_GROUP.equalsIgnoreCase(configKey.group))
+            .mapToInt(configKey -> configKey.orderInGroup)
+            .max()
+            .orElse(0);
+
+    return configDef
         // Define Database configuration group
         .define(
             CONNECTION_URL_CONFIG,
@@ -137,6 +155,17 @@ public class JdbcHdfsSinkConnectorConfig extends HdfsSinkConnectorConfig {
             ++orderInHashCacheGroup,
             Width.MEDIUM,
             HASH_CACHE_SIZE_DISPLAY
+        )
+        .define(
+            SCHEMA_SUFFIX_CONFIG,
+            Type.STRING,
+            ConfigDef.NO_DEFAULT_VALUE,
+            Importance.MEDIUM,
+            SCHEMA_SUFFIX_DOC,
+            SCHEMA_GROUP,
+            ++orderInSchemaGroup,
+            Width.MEDIUM,
+            SCHEMA_SUFFIX_DISPLAY
         );
   }
 
@@ -186,6 +215,14 @@ public class JdbcHdfsSinkConnectorConfig extends HdfsSinkConnectorConfig {
 
   public int getHashCacheSize() {
     return getInt(HASH_CACHE_SIZE_CONFIG);
+  }
+
+  public String getSchemaSuffix() {
+    return JdbcUtil
+        .trimToNone(getString(SCHEMA_SUFFIX_CONFIG))
+        .orElseThrow(() -> new ConfigException(
+            "Missing or empty String value for required [" + SCHEMA_SUFFIX_CONFIG + "]"
+        ));
   }
 
   public Map<JdbcTableInfo, Set<String>> getIncludedFieldsLower() {
@@ -239,7 +276,7 @@ public class JdbcHdfsSinkConnectorConfig extends HdfsSinkConnectorConfig {
         .trimToNone(schemaTableColumn.get(0))
         .map(String::toLowerCase)
         .orElseThrow(() -> new ConfigException(
-            "Empty <schema> value for key ["
+            "Empty 'schema' value for key ["
             + COLUMN_INCLUDE_LIST_CONFIG
             + "] value ["
             + fullyQualifiedColumn
@@ -251,7 +288,7 @@ public class JdbcHdfsSinkConnectorConfig extends HdfsSinkConnectorConfig {
         .trimToNone(schemaTableColumn.get(1))
         .map(String::toLowerCase)
         .orElseThrow(() -> new ConfigException(
-            "Empty <table> value for key ["
+            "Empty 'table' value for key ["
             + COLUMN_INCLUDE_LIST_CONFIG
             + "] value ["
             + fullyQualifiedColumn
@@ -269,7 +306,7 @@ public class JdbcHdfsSinkConnectorConfig extends HdfsSinkConnectorConfig {
         .trimToNone(schemaTableColumn.get(2))
         .map(String::toLowerCase)
         .orElseThrow(() -> new ConfigException(
-            "Empty <column> value for key ["
+            "Empty 'column' value for key ["
             + COLUMN_INCLUDE_LIST_CONFIG
             + "] value ["
             + fullyQualifiedColumn

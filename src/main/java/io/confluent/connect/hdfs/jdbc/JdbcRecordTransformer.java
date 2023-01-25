@@ -43,15 +43,18 @@ public class JdbcRecordTransformer {
   private final DataSource dataSource;
   private final Map<JdbcTableInfo, Set<String>> includedFieldsLowerMap;
   private final HashCache hashCache;
+  private final Function<Schema, String> schemaNameFn;
 
   public JdbcRecordTransformer(
       DataSource dataSource,
       Map<JdbcTableInfo, Set<String>> includedFieldsLowerMap,
-      HashCache hashCache
+      HashCache hashCache,
+      Function<Schema, String> schemaNameFn
   ) {
     this.dataSource = dataSource;
     this.includedFieldsLowerMap = includedFieldsLowerMap;
     this.hashCache = hashCache;
+    this.schemaNameFn = schemaNameFn;
   }
 
   /**
@@ -63,12 +66,16 @@ public class JdbcRecordTransformer {
   ) throws SQLException {
     JdbcTableInfo tableInfo = toTable(oldRecord.headers());
 
+    // Get a list of Fields requested/configured to be in the new Schema.
+    // Fields: Columns, but also non-columns, which can include Kafka/Connect properties like:
+    //         kafka_ts, db_ts, etc...
+
     Set<String> includedFieldsLower =
         Optional
             .ofNullable(includedFieldsLowerMap.get(tableInfo))
             .orElseGet(Collections::emptySet);
 
-    // No columns to Query? No need to write anything at all to HDFS
+    // No columns/fields to Query? No need to write anything at all to HDFS
 
     if (includedFieldsLower.isEmpty()) {
       return null;
@@ -113,6 +120,10 @@ public class JdbcRecordTransformer {
     List<JdbcColumnInfo> primaryKeyColumns =
         sqlMetadataCache.fetchPrimaryKeyColumns(tableInfo);
 
+    if (primaryKeyColumns.isEmpty()) {
+      throw new DataException("Table has no Primary Key(s): " + tableInfo);
+    }
+
     Set<String> primaryKeyColumnNamesLower =
         primaryKeyColumns
             .stream()
@@ -139,12 +150,14 @@ public class JdbcRecordTransformer {
 
     // Create the mew Schema and new value Struct
 
-    Schema newValueSchema = JdbcSchema.createSchema(
-        includedFieldsLower,
-        oldValueSchema,
-        primaryKeyColumns,
-        columnsToQuery
-    );
+    Schema newValueSchema =
+        JdbcSchema.createSchema(
+            schemaNameFn.apply(oldValueSchema),
+            oldValueSchema,
+            includedFieldsLower,
+            primaryKeyColumns,
+            columnsToQuery
+        );
 
     Struct newValueStruct = new Struct(newValueSchema);
 
@@ -165,8 +178,8 @@ public class JdbcRecordTransformer {
     String primaryKeyStr = Optional
         .ofNullable(oldRecord.key())
         .map(Object::toString)
-        .map(String::trim)
-        .orElse("");
+        .flatMap(JdbcUtil::trimToNone)
+        .orElseThrow(() -> new DataException("Missing Primary Key(s) for Kafka Record"));
 
     FilteredColumnToStructVisitor columnVisitor =
         new FilteredColumnToStructVisitor(
