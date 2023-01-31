@@ -183,8 +183,7 @@ public class JdbcQueryUtil {
         + " FROM "
         + tableInfo.qualifiedName()
         + " WHERE "
-        + whereClause
-        + ";";
+        + whereClause;
 
     // Execute the Query
     log.debug(
